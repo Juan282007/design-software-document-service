@@ -1,0 +1,67 @@
+name: Project env tracking
+
+# Al mergear un PR a develop/qa/staging/main, actualiza el campo Environment
+# de la HU vinculada en el GitHub Project #3 (control de ambiente).
+# La HU se referencia en el título o cuerpo del PR como:
+#   Closes code-sena/design-software-docs#<NN>   (o simplemente design-software-docs#<NN>)
+#
+# Requisito: secret PROJECTS_TOKEN (PAT con scope `project` + `read:org`) a nivel de
+# organización, disponible para este repo. Ver README-env-tracking.md.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [develop, qa, staging, main]
+
+permissions:
+  contents: read
+
+jobs:
+  update-project:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Actualizar Environment/Status de la HU vinculada
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECTS_TOKEN }}
+          script: |
+            const PROJECT_ID = 'PVT_kwDOCG6DO84BX48D';
+            const ENV_FIELD  = 'PVTSSF_lADOCG6DO84BX48DzhaXh7I';   // Environment
+            // opción por rama: develop->Dev, qa->QA, staging->Staging, main->Main
+            const ENV_OPT = { develop:'dfd5af6a', qa:'f6167b52', staging:'47e13149', main:'59ab3e86' };
+
+            const base = context.payload.pull_request.base.ref;
+            const envOpt = ENV_OPT[base];
+            if (!envOpt) { core.info(`Rama base '${base}' no mapeada; nada que hacer.`); return; }
+
+            // Extraer números de HU referenciados a design-software-docs
+            const pr = context.payload.pull_request;
+            const text = `${pr.title}\n${pr.body || ''}`;
+            // Solo referencias explícitas a design-software-docs (evita agarrar '#3' de "Project #3")
+            const nums = new Set();
+            const re = /design-software-docs#(\d+)/g;
+            let m; while ((m = re.exec(text))) nums.add(parseInt(m[1], 10));
+            if (!nums.size) { core.warning('El PR no referencia ninguna HU (design-software-docs#NN).'); return; }
+
+            const setField = (itemId, fieldId, optId) => github.graphql(
+              `mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){
+                 updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){projectV2Item{id}}}`,
+              { p: PROJECT_ID, i: itemId, f: fieldId, o: optId });
+
+            for (const n of nums) {
+              try {
+                const r = await github.graphql(
+                  `query($n:Int!){ repository(owner:"code-sena",name:"design-software-docs"){
+                     issue(number:$n){ id projectItems(first:20){ nodes{ id project{ id } } } } } }`, { n });
+                const issue = r.repository.issue;
+                if (!issue) { core.info(`#${n} no es un issue de design-software-docs; se omite.`); continue; }
+                const item = issue.projectItems.nodes.find(x => x.project.id === PROJECT_ID);
+                if (!item) { core.info(`#${n} no está en el Project #3; se omite.`); continue; }
+
+                await setField(item.id, ENV_FIELD, envOpt);
+                core.info(`HU #${n}: Environment = ${base}`);
+              } catch (e) {
+                core.warning(`HU #${n}: no se pudo actualizar (${e.message}); se omite.`);
+              }
+            }
