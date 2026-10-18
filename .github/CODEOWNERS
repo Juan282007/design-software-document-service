@@ -1,0 +1,6 @@
+# CODEOWNERS — design-software-document-service
+# Catch-all: arquitectos + QA + product manager.
+# Un PR requiere aprobacion de al menos un code owner (ver ruleset del repo).
+# Granularidad por rol se afinara cuando existan los teams de rol.
+
+*   @code-sena/design-software-develop @ariel5253 @Dannabarrios @Nicolasruiz918
